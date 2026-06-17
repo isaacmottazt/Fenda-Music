@@ -1,0 +1,224 @@
+/* ===== PERFIL - ESTILO MODERNO ===== */
+
+.profile-container-modern {
+    padding: 8px 0 24px;
+}
+
+/* Cabeçalho */
+.profile-header-modern {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.profile-avatar-modern span {
+    font-size: 96px;
+    color: #b07fff;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
+}
+
+.profile-info-modern h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 12px 0 4px;
+    color: #ffffff;
+}
+
+.profile-username {
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 8px;
+}
+
+.profile-bio {
+    font-size: 14px;
+    color: rgba(255,255,255,0.8);
+    max-width: 280px;
+    margin: 0 auto;
+}
+
+/* Cards de estatísticas */
+.profile-stats-modern {
+    display: flex;
+    justify-content: space-around;
+    background: rgba(255,255,255,0.05);
+    border-radius: 28px;
+    padding: 20px 12px;
+    margin-bottom: 24px;
+    backdrop-filter: blur(4px);
+}
+
+.stat-card-modern {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: 800;
+    color: #b07fff;
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* Cartão plano premium */
+.premium-card-modern {
+    background: linear-gradient(135deg, #1e1a2f, #120e1c);
+    border-radius: 24px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 28px;
+    border: 1px solid rgba(146,76,255,0.3);
+}
+
+.premium-icon span {
+    font-size: 40px;
+    color: #f5b041;
+}
+
+.premium-info {
+    flex: 1;
+}
+
+.premium-info h4 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    color: #fff;
+}
+
+.premium-info p {
+    font-size: 12px;
+    margin: 0;
+    color: rgba(255,255,255,0.5);
+}
+
+.premium-btn {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 40px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.premium-btn:hover {
+    background: rgba(146,76,255,0.6);
+}
+
+/* Menu de navegação */
+.profile-nav-modern {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 24px;
+}
+
+.profile-nav-item {
+    background: rgba(255,255,255,0.03);
+    border: none;
+    border-radius: 16px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 500;
+    text-align: left;
+}
+
+.profile-nav-item .material-symbols-rounded {
+    font-size: 24px;
+    color: #b07fff;
+}
+
+.profile-nav-item:hover {
+    background: rgba(146,76,255,0.15);
+}
+
+/* Botão sair */
+.logout-btn-modern {
+    background: rgba(255,74,117,0.1);
+    border: 1px solid rgba(255,74,117,0.3);
+    border-radius: 16px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+    color: #ff4a75;
+    font-size: 15px;
+    font-weight: 600;
+    width: 100%;
+    margin-bottom: 28px;
+}
+
+.logout-btn-modern .material-symbols-rounded {
+    font-size: 24px;
+    color: #ff4a75;
+}
+
+.logout-btn-modern:hover {
+    background: rgba(255,74,117,0.2);
+}
+
+/* Frase de rodapé */
+.profile-footer-quote {
+    text-align: center;
+    padding: 16px 0;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+}
+
+.profile-footer-quote strong {
+    color: #b07fff;
+    margin-left: 6px;
+    font-weight: 600;
+}
+
+/* Responsividade */
+@media (max-width: 480px) {
+    .profile-avatar-modern span {
+        font-size: 72px;
+    }
+    .profile-info-modern h1 {
+        font-size: 22px;
+    }
+    .stat-number {
+        font-size: 20px;
+    }
+    .profile-bio {
+        font-size: 12px;
+    }
+    .premium-card-modern {
+        padding: 12px 16px;
+    }
+    .premium-icon span {
+        font-size: 32px;
+    }
+    .profile-nav-item {
+        padding: 12px 16px;
+        font-size: 14px;
+    }
+}
