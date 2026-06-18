@@ -168,13 +168,11 @@ function _cacheKey(name) {
 const CacheDB = {
     save(name, data) {
         try {
-            localStorage.setItem(_cacheKey(name), JSON.stringify({
-                data,
-                savedAt: Date.now()
-            }));
+            const str = JSON.stringify(data);
+            localStorage.setItem(_cacheKey(name), str);
             return true;
         } catch(e) {
-            console.warn('[Cache] Erro ao salvar ' + name + ':', e);
+            console.warn('[Cache] Erro ao salvar ' + name + ' (' + (e.name || '') + '):', e.message || e);
             return false;
         }
     },
@@ -183,28 +181,28 @@ const CacheDB = {
         try {
             const raw = localStorage.getItem(_cacheKey(name));
             if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            return parsed.data ?? null;
+            return JSON.parse(raw);
         } catch { return null; }
     },
 
     async saveAll({ musics, artists, playlists, favorites, history, profile, searchHistory, userId }) {
-        try {
-            this.save('musics',        musics        || []);
-            this.save('artists',       artists       || []);
-            this.save('playlists_' + userId, playlists || []);
-            this.save('favorites_' + userId, favorites || []);
-            this.save('history_'  + userId, history   || []);
-            this.save('profile_'  + userId, profile   || {});
-            this.save('search_'   + userId, searchHistory || []);
-            this.save('meta_userId',   userId);
-            this.save('meta_savedAt',  Date.now());
-            console.log('[Cache] ✅ Dados salvos no localStorage');
-            return true;
-        } catch(e) {
-            console.warn('[Cache] Erro no saveAll:', e);
-            return false;
-        }
+        // Salva músicas compactas (só campos essenciais para não estourar o localStorage)
+        const musicsCompact = (musics || []).map(m => ({
+            id: m.id, title: m.title, artist: m.artist,
+            cover: m.cover, src: m.src, genre: m.genre || null
+        }));
+        const results = {
+            musics:    this.save('musics', musicsCompact),
+            playlists: this.save('playlists_' + userId, playlists || []),
+            favorites: this.save('favorites_' + userId, favorites || []),
+            history:   this.save('history_'   + userId, (history || []).slice(0, 30)),
+            profile:   this.save('profile_'   + userId, profile || {}),
+            userId:    this.save('meta_userId', userId),
+        };
+        console.log('[Cache] saveAll resultados:', results);
+        const allOk = Object.values(results).every(Boolean);
+        console.log('[Cache] ' + (allOk ? '✅ Tudo salvo' : '⚠️ Alguns itens falharam'));
+        return allOk;
     },
 
     async loadAll(userId) {
@@ -214,11 +212,14 @@ const CacheDB = {
                 artists:       this.load('artists')              || [],
                 playlists:     this.load('playlists_' + userId)  || [],
                 favorites:     this.load('favorites_' + userId)  || [],
-                history:       this.load('history_'  + userId)   || [],
-                profile:       this.load('profile_'  + userId)   || {},
-                searchHistory: this.load('search_'   + userId)   || [],
+                history:       this.load('history_'   + userId)  || [],
+                profile:       this.load('profile_'   + userId)  || {},
+                searchHistory: this.load('search_'    + userId)  || [],
             };
-        } catch { return null; }
+        } catch(e) {
+            console.warn('[Cache] loadAll erro:', e);
+            return null;
+        }
     },
 
     hasCached(userId) {
@@ -964,6 +965,69 @@ function showConfirmDialog(title, message, onConfirm, onCancel) {
 }
 
 window.showConfirmDialog = showConfirmDialog;
+
+
+// ===== DIAGNÓSTICO DE CACHE (remover depois de testar) =====
+window.mostrarDiagnostico = async function() {
+    const userId = window.AppState?.userId;
+    const musics = window.AppState?.musics?.length || 0;
+    const playlists = window.AppState?.userPlaylists?.length || 0;
+    const nome = window.AppState?.userProfile?.full_name || '(vazio)';
+    const historico = window.AppState?.history?.length || 0;
+    const online = navigator.onLine;
+
+    const fendaKeys = Object.keys(localStorage).filter(k => k.startsWith('fenda_'));
+    const musicsCache = localStorage.getItem('fenda_cache_musics');
+    const musicsCacheCount = musicsCache ? (JSON.parse(musicsCache)?.length || 0) : 0;
+
+    let totalKB = 0;
+    for (let k in localStorage) {
+        if (localStorage.hasOwnProperty(k)) totalKB += (localStorage[k].length * 2) / 1024;
+    }
+
+    const msg = [
+        '=== DIAGNÓSTICO ===',
+        'Online: ' + (online ? '✅ SIM' : '❌ NÃO'),
+        'UserId: ' + (userId ? '✅ ' + userId.substring(0,8) + '...' : '❌ NULL'),
+        'Músicas no app: ' + musics,
+        'Músicas no cache: ' + musicsCacheCount,
+        'Playlists: ' + playlists,
+        'Histórico: ' + historico,
+        'Nome: ' + nome,
+        'Chaves fenda_: ' + fendaKeys.length,
+        'localStorage: ' + totalKB.toFixed(1) + 'KB',
+        '',
+        'Chaves salvas:',
+        ...fendaKeys.map(k => '• ' + k),
+    ].join('\n');
+
+    // Salva agora e mostra resultado
+    if (window.CacheDB && userId) {
+        const ok = await window.CacheDB.saveAll({
+            musics:        window.AppState.musics || [],
+            artists:       window.AppState.artists || [],
+            playlists:     window.AppState.userPlaylists || [],
+            favorites:     [...(window.AppState.favorites || [])],
+            history:       window.AppState.history || [],
+            profile:       window.AppState.userProfile || {},
+            searchHistory: window.recentSearchesGlobal || [],
+            userId,
+        });
+        alert(msg + '\n\nSave agora: ' + (ok ? '✅ OK' : '❌ FALHOU'));
+    } else {
+        alert(msg + '\n\nCacheDB: ' + (window.CacheDB ? '✅' : '❌ não encontrado'));
+    }
+};
+
+// Botão flutuante de diagnóstico
+window.addEventListener('load', () => {
+    const btn = document.createElement('button');
+    btn.innerText = '🔍 Cache';
+    btn.style.cssText = 'position:fixed;bottom:120px;right:16px;z-index:99999;background:#7c3aed;color:white;border:none;border-radius:20px;padding:8px 14px;font-size:13px;cursor:pointer;';
+    btn.onclick = () => window.mostrarDiagnostico();
+    document.body.appendChild(btn);
+});
+
 
 window.AppState = AppState;
 window.DOM = DOM;
