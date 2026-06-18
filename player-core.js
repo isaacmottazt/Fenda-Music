@@ -661,31 +661,21 @@ function initKeyboardShortcuts() {
 
 // ===== CARREGAR DADOS INICIAIS DO USUÁRIO =====
 async function loadInitialData() {
-    // ── 1. Tenta carregar do cache primeiro ─────────────────────────
-    const cacheOk = AppState.userId && await CacheDB.isFresh(AppState.userId);
+    // ── PASSO 1: carrega o que tiver no cache IMEDIATAMENTE ─────────
+    // (Independente de estar online ou offline, e independente do TTL)
+    await _loadAllFromCache();
 
-    if (cacheOk) {
-        console.log('[Cache] ⚡ Carregando dados do cache local...');
-        const cached = await CacheDB.loadAll();
-        if (cached) {
-            AppState.musics        = cached.musics || [];
-            AppState.artists       = cached.artists || [];
-            AppState.userPlaylists = cached.playlists || [];
-            AppState.favorites     = new Set(cached.favorites || []);
-            AppState.history       = cached.history || [];
-            AppState.userProfile   = cached.profile || {};
-            window.recentSearchesGlobal = cached.searchHistory || [];
-            if (typeof window.renderRecentSearches === 'function') window.renderRecentSearches();
-            console.log('[Cache] ✅ App carregado do cache — músicas:', AppState.musics.length);
-            // Atualiza em background sem bloquear a UI
-            _refreshFromSupabaseInBackground();
-            return;
-        }
+    // ── PASSO 2: se online, atualiza em background ──────────────────
+    if (navigator.onLine) {
+        console.log('[Cache] 🌐 Online — atualizando dados em background...');
+        _fetchAllFromSupabase().then(() => {
+            if (typeof window.renderHome === 'function') window.renderHome();
+            if (typeof window.renderLibrary === 'function') window.renderLibrary();
+            if (typeof window.renderProfile === 'function') window.renderProfile();
+        }).catch(e => console.warn('[Cache] Falha ao atualizar online:', e));
+    } else {
+        console.log('[Cache] 📴 Offline — usando dados do cache');
     }
-
-    // ── 2. Cache vazio ou expirado: busca do Supabase ───────────────
-    console.log('[Cache] 🌐 Buscando dados do Supabase...');
-    await _fetchAllFromSupabase();
 }
 
 async function _fetchAllFromSupabase() {
@@ -989,26 +979,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
-    // ✅ PASSO 3: carrega dados em background (não bloqueia mais a UI)
-    const profileOk = await ensureProfileExists();
-    if (!profileOk) {
-        console.warn('⚠️ Perfil não pode ser verificado/criado, mas continuando...');
-    }
-    
-    const profileData = await window.getUserProfile(AppState.userId);
-    AppState.userProfile = profileData;
-    
-    localStorage.setItem('user_name', profileData.full_name || userName);
+    // ✅ PASSO 3: salva userId e email no localStorage para acesso offline
     localStorage.setItem('user_email', userEmail);
+    localStorage.setItem('fenda_userId', AppState.userId);
 
-    // Salva nome vinculado ao userId para acesso offline
-    saveLocalUserName(profileData.full_name || userName, userEmail);
-
-    // Carrega histórico local imediatamente (antes do Supabase)
+    // Carrega histórico local imediatamente (antes de qualquer chamada de rede)
     const localHistory = loadLocalHistory();
     if (localHistory.length > 0) {
         AppState.history = localHistory;
-        console.log('[Cache] Histórico local carregado:', localHistory.length, 'itens');
+    }
+
+    // Carrega nome do usuário do cache local imediatamente
+    const localUser = loadLocalUserName();
+    if (localUser) {
+        AppState.userProfile = { full_name: localUser.name, email: localUser.email };
+        localStorage.setItem('user_name', localUser.name);
+    }
+
+    if (navigator.onLine) {
+        // Online: garante perfil e carrega dados frescos
+        try {
+            await ensureProfileExists();
+            const profileData = await window.getUserProfile(AppState.userId);
+            AppState.userProfile = profileData;
+            localStorage.setItem('user_name', profileData.full_name || userName);
+            saveLocalUserName(profileData.full_name || userName, userEmail);
+        } catch(e) {
+            console.warn('[Cache] Não foi possível carregar perfil online:', e);
+            if (!AppState.userProfile?.full_name) {
+                AppState.userProfile = { full_name: userName, email: userEmail };
+            }
+        }
+    } else {
+        // Offline: usa dados locais
+        console.log('[Cache] 📴 Offline no login — usando dados locais');
+        if (!AppState.userProfile?.full_name) {
+            AppState.userProfile = { full_name: userName, email: userEmail };
+        }
     }
 
     await initApp();
