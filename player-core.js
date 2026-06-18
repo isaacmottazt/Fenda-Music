@@ -55,24 +55,99 @@ const DOM = {
     homeTitle: document.getElementById('homeTitle')
 };
 
-// ===== HISTÓRICO (agora salva no Supabase) =====
+// ===== HISTÓRICO LOCAL + SUPABASE =====
+
+// Chave do localStorage por usuário
+function _historyKey() { return `fenda_history_${AppState.userId}`; }
+function _totalTimeKey() { return `fenda_totaltime_${AppState.userId}`; }
+function _userNameKey() { return `fenda_username_${AppState.userId}`; }
+
+// Carrega histórico local
+function loadLocalHistory() {
+    try {
+        const raw = localStorage.getItem(_historyKey());
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+}
+
+// Salva histórico local
+function saveLocalHistory(history) {
+    try {
+        localStorage.setItem(_historyKey(), JSON.stringify(history.slice(0, 50)));
+    } catch(e) { console.warn('[Cache] Erro ao salvar histórico:', e); }
+}
+
+// Salva tempo total ouvido (em segundos)
+function addToTotalTime(seconds) {
+    try {
+        const key = _totalTimeKey();
+        const current = parseInt(localStorage.getItem(key) || '0');
+        localStorage.setItem(key, String(current + seconds));
+    } catch {}
+}
+
+// Retorna tempo total ouvido formatado
+function getTotalListenedTime() {
+    try {
+        const secs = parseInt(localStorage.getItem(_totalTimeKey()) || '0');
+        const hours = Math.floor(secs / 3600);
+        const mins = Math.floor((secs % 3600) / 60);
+        if (hours > 0) return `${hours}h ${mins}min`;
+        return `${mins}min`;
+    } catch { return '0min'; }
+}
+
+// Salva nome do usuário localmente
+function saveLocalUserName(name, email) {
+    try {
+        if (AppState.userId) {
+            localStorage.setItem(_userNameKey(), JSON.stringify({ name, email, savedAt: Date.now() }));
+        }
+    } catch {}
+}
+
+// Carrega nome do usuário local
+function loadLocalUserName() {
+    try {
+        const raw = localStorage.getItem(_userNameKey());
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
 async function addToHistory(music, listenedSeconds = 0) {
-    if (!music || !AppState.userId) return;
-    // Salva no Supabase
-    await window.addToListeningHistory(AppState.userId, music.id, listenedSeconds);
-    // Atualiza estado local (apenas para exibição imediata)
-    const existingIndex = AppState.history.findIndex(h => h.id === music.id);
-    if (existingIndex !== -1) AppState.history.splice(existingIndex, 1);
-    AppState.history.unshift({
+    if (!music) return;
+
+    // 1. Salva SEMPRE no localStorage (funciona offline)
+    const history = loadLocalHistory();
+    const existingIndex = history.findIndex(h => h.id === music.id);
+    if (existingIndex !== -1) history.splice(existingIndex, 1);
+    history.unshift({
         id: music.id,
         title: music.title,
         artist: music.artist,
         cover: music.cover,
-        listenedSeconds: listenedSeconds,
+        listenedSeconds,
         playedAt: Date.now()
     });
-    if (AppState.history.length > AppState.MAX_HISTORY) AppState.history.pop();
+    saveLocalHistory(history);
+
+    // 2. Atualiza tempo total ouvido localmente
+    if (listenedSeconds > 5) addToTotalTime(listenedSeconds);
+
+    // 3. Atualiza AppState imediatamente
+    AppState.history = history;
+
+    // 4. Tenta salvar no Supabase em background (não bloqueia)
+    if (AppState.userId && navigator.onLine) {
+        window.addToListeningHistory?.(AppState.userId, music.id, listenedSeconds)
+            .catch(() => console.warn('[Cache] Histórico não sincronizado (offline)'));
+    }
 }
+
+window.getTotalListenedTime = getTotalListenedTime;
+window.loadLocalHistory = loadLocalHistory;
+window.saveLocalUserName = saveLocalUserName;
+window.loadLocalUserName = loadLocalUserName;
 
 let playCounts = JSON.parse(localStorage.getItem('play_counts') || '{}');
 function incrementPlayCount(musicId) {
@@ -724,6 +799,13 @@ function checkDeepLink() {
 }
 
 function calculateTotalMinutesListened() {
+    // Usa o tempo total acumulado no localStorage (mais preciso)
+    if (AppState.userId) {
+        const key = `fenda_totaltime_${AppState.userId}`;
+        const secs = parseInt(localStorage.getItem(key) || '0');
+        if (secs > 0) return Math.floor(secs / 60);
+    }
+    // Fallback: soma do histórico atual
     let totalSeconds = 0;
     AppState.history.forEach(item => totalSeconds += item.listenedSeconds || 0);
     return Math.floor(totalSeconds / 60);
@@ -830,7 +912,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     localStorage.setItem('user_name', profileData.full_name || userName);
     localStorage.setItem('user_email', userEmail);
-    
+
+    // Salva nome vinculado ao userId para acesso offline
+    saveLocalUserName(profileData.full_name || userName, userEmail);
+
+    // Carrega histórico local imediatamente (antes do Supabase)
+    const localHistory = loadLocalHistory();
+    if (localHistory.length > 0) {
+        AppState.history = localHistory;
+        console.log('[Cache] Histórico local carregado:', localHistory.length, 'itens');
+    }
+
     await initApp();
     checkDeepLink();
 });

@@ -222,6 +222,14 @@ async function saveUserPlaylist(playlist) {
             .from('user_playlists')
             .upsert(playlist);
         if (error) throw error;
+        // Atualiza cache local também
+        if (playlist.user_id) {
+            const cached = await UserCacheDB.get('playlists', playlist.user_id) || [];
+            const idx = cached.findIndex(p => p.id === playlist.id);
+            if (idx >= 0) cached[idx] = playlist;
+            else cached.push(playlist);
+            await UserCacheDB.set('playlists', playlist.user_id, cached);
+        }
         return true;
     } catch (e) {
         console.error('saveUserPlaylist:', e);
@@ -237,6 +245,10 @@ async function deleteUserPlaylist(playlistId, userId) {
             .eq('id', playlistId)
             .eq('user_id', userId);
         if (error) throw error;
+        // Remove do cache local também
+        const cached = await UserCacheDB.get('playlists', userId) || [];
+        const updated = cached.filter(p => p.id !== playlistId);
+        await UserCacheDB.set('playlists', userId, updated);
         return true;
     } catch (e) {
         console.error('deleteUserPlaylist:', e);
