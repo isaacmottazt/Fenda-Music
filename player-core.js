@@ -689,7 +689,14 @@ async function loadInitialData() {
 }
 
 async function _fetchAllFromSupabase() {
-    // Músicas globais
+    // ── Se offline, carrega tudo do cache e para por aqui ───────────
+    if (!navigator.onLine) {
+        console.log('[Cache] 📴 Offline — carregando tudo do cache local...');
+        await _loadAllFromCache();
+        return;
+    }
+
+    // ── Online: busca do Supabase ────────────────────────────────────
     const supabasePromise = (async () => {
         if (typeof window.loadMusicsFromSupabase === 'function') {
             try { return await window.loadMusicsFromSupabase(); } catch (err) { return []; }
@@ -744,7 +751,7 @@ async function _fetchAllFromSupabase() {
         if (typeof window.renderRecentSearches === 'function') window.renderRecentSearches();
     }
 
-    // ── 3. Salva tudo no cache para a próxima vez ────────────────────
+    // ── Salva tudo no cache para a próxima vez ────────────────────────
     if (AppState.userId) {
         CacheDB.saveAll({
             musics:        AppState.musics,
@@ -757,6 +764,87 @@ async function _fetchAllFromSupabase() {
             userId:        AppState.userId,
         });
     }
+}
+
+// Carrega tudo do cache local (IndexedDB + localStorage)
+async function _loadAllFromCache() {
+    // 1. CacheDB (músicas, artistas, playlists, favoritos do Supabase)
+    const cached = await CacheDB.loadAll();
+    if (cached) {
+        AppState.musics        = cached.musics    || [];
+        AppState.artists       = cached.artists   || [];
+        AppState.userPlaylists = cached.playlists || [];
+        AppState.favorites     = new Set(cached.favorites || []);
+        if (cached.profile && cached.profile.full_name) {
+            AppState.userProfile = cached.profile;
+        }
+    }
+
+    // 2. UserCacheDB (perfil, playlists, favoritos, histórico do Supabase)
+    if (AppState.userId && window.UserCacheDB) {
+        const [profile, playlists, favorites, history, searchTerms] = await Promise.all([
+            window.UserCacheDB.get('profile',       AppState.userId),
+            window.UserCacheDB.get('playlists',     AppState.userId),
+            window.UserCacheDB.get('favorites',     AppState.userId),
+            window.UserCacheDB.get('history',       AppState.userId),
+            window.UserCacheDB.get('searchHistory', AppState.userId),
+        ]);
+        if (profile)     AppState.userProfile   = profile;
+        if (playlists)   AppState.userPlaylists = playlists;
+        if (favorites)   AppState.favorites     = new Set(favorites);
+        if (searchTerms) {
+            window.recentSearchesGlobal = searchTerms;
+            if (typeof window.renderRecentSearches === 'function') window.renderRecentSearches();
+        }
+        // Histórico do Supabase cache (se localStorage não tiver)
+        if (history && history.length > 0 && AppState.history.length === 0) {
+            AppState.history = history.map(h => ({
+                id: h.music_id,
+                title:  AppState.musics.find(m => m.id === h.music_id)?.title  || '',
+                artist: AppState.musics.find(m => m.id === h.music_id)?.artist || '',
+                cover:  AppState.musics.find(m => m.id === h.music_id)?.cover  || '',
+                listenedSeconds: h.listened_seconds || 0,
+                playedAt: h.played_at ? new Date(h.played_at).getTime() : Date.now()
+            }));
+        }
+    }
+
+    // 3. Histórico local (localStorage — sempre mais atualizado)
+    const localHistory = loadLocalHistory();
+    if (localHistory.length > 0) AppState.history = localHistory;
+
+    // 4. Nome do usuário do localStorage
+    const localUser = loadLocalUserName();
+    if (localUser && (!AppState.userProfile?.full_name)) {
+        AppState.userProfile = { ...AppState.userProfile, full_name: localUser.name };
+        localStorage.setItem('user_email', localUser.email);
+    }
+
+    // 5. Músicas baixadas offline — adiciona ao AppState.musics se não estiver
+    if (window.getAllCachedMusics) {
+        const cachedMusics = await window.getAllCachedMusics();
+        cachedMusics.forEach(meta => {
+            const alreadyIn = AppState.musics.find(m => m.id === meta.musicId);
+            if (!alreadyIn) {
+                AppState.musics.push({
+                    id: meta.musicId,
+                    title: meta.title,
+                    artist: meta.artist,
+                    cover: meta.cover,
+                    src: meta.url,
+                    _offlineOnly: true
+                });
+            }
+        });
+    }
+
+    console.log('[Cache] ✅ Carregado offline:', {
+        músicas: AppState.musics.length,
+        playlists: AppState.userPlaylists.length,
+        favoritos: AppState.favorites.size,
+        histórico: AppState.history.length,
+        nome: AppState.userProfile?.full_name
+    });
 }
 
 // Atualiza silenciosamente em background sem travar a UI
