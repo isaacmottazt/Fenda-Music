@@ -58,23 +58,28 @@ function renderHome() {
 
     const popPlaylistsContainer = document.getElementById('popularPlaylistsList');
     if (popPlaylistsContainer) {
-        const populars = [
-            { name: "MPB Raiz", icon: "queue_music" },
-            { name: "Rock Nacional", icon: "rocket" },
-            { name: "As Melhores do Pop", icon: "star" },
-            { name: "Funk Hits", icon: "music_note" }
-        ];
-        popPlaylistsContainer.innerHTML = populars.map(pl => `
-            <div class="playlist-card" data-playlist="${pl.name}">
-                <div class="playlist-icon"><span class="material-symbols-rounded">${pl.icon}</span></div>
-                <h4>${pl.name}</h4>
-                <p>Playlist • Fenda Music</p>
+        // 10 últimas músicas adicionadas (ordenadas por created_at ou id decrescente)
+        const newest = [...AppState.musics]
+            .sort((a, b) => {
+                if (a.created_at && b.created_at)
+                    return new Date(b.created_at) - new Date(a.created_at);
+                return (b.id || 0) - (a.id || 0);
+            })
+            .slice(0, 10);
+
+        popPlaylistsContainer.innerHTML = newest.map(music => `
+            <div class="music-card-horizontal newest-card" data-id="${music.id}">
+                <img src="${music.cover || 'https://via.placeholder.com/150'}" loading="lazy">
+                <h4>${escapeHtml(music.title)}</h4>
+                <p>${escapeHtml(music.artist)}</p>
             </div>
         `).join('');
-        document.querySelectorAll('.playlist-card').forEach(card => {
+
+        popPlaylistsContainer.querySelectorAll('.newest-card').forEach(card => {
             card.addEventListener('click', () => {
-                const randomMusic = AppState.musics[Math.floor(Math.random() * AppState.musics.length)];
-                if (randomMusic) playMusicTrack(randomMusic);
+                const id = parseInt(card.dataset.id);
+                const music = AppState.musics.find(m => m.id === id);
+                if (music) playMusicTrack(music);
             });
         });
     }
@@ -114,9 +119,9 @@ function renderHome() {
         });
     }
 
-    const seeAllPlaylists = document.getElementById('seeAllPlaylists');
-    if (seeAllPlaylists) {
-        seeAllPlaylists.addEventListener('click', () => {
+    const seeAllNewest = document.getElementById('seeAllNewest');
+    if (seeAllNewest) {
+        seeAllNewest.addEventListener('click', () => {
             const bibliotecaNavBtn = document.querySelector('.nav-btn[data-tab="biblioteca"]');
             if (bibliotecaNavBtn) {
                 bibliotecaNavBtn.click();
