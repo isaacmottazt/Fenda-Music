@@ -58,7 +58,7 @@ function renderHome() {
 
     const popPlaylistsContainer = document.getElementById('popularPlaylistsList');
     if (popPlaylistsContainer) {
-        // 10 últimas músicas adicionadas (ordenadas por created_at ou id decrescente)
+        // 10 últimas músicas adicionadas
         const newest = [...AppState.musics]
             .sort((a, b) => {
                 if (a.created_at && b.created_at)
@@ -67,14 +67,21 @@ function renderHome() {
             })
             .slice(0, 10);
 
-        popPlaylistsContainer.innerHTML = newest.map(music => `
-            <div class="music-card-horizontal newest-card" data-id="${music.id}">
-                <img src="${music.cover || 'https://via.placeholder.com/150'}" loading="lazy">
-                <h4>${escapeHtml(music.title)}</h4>
-                <p>${escapeHtml(music.artist)}</p>
+        // Estrutura de carrossel
+        popPlaylistsContainer.className = 'carousel-container';
+        popPlaylistsContainer.innerHTML = `
+            <div class="carousel-track" id="newestCarouselTrack">
+                ${newest.map(music => `
+                    <div class="music-card-horizontal newest-card" data-id="${music.id}">
+                        <img src="${music.cover || 'https://via.placeholder.com/150'}" loading="lazy">
+                        <h4>${escapeHtml(music.title)}</h4>
+                        <p>${escapeHtml(music.artist)}</p>
+                    </div>
+                `).join('')}
             </div>
-        `).join('');
+        `;
 
+        // Clique nos cards
         popPlaylistsContainer.querySelectorAll('.newest-card').forEach(card => {
             card.addEventListener('click', () => {
                 const id = parseInt(card.dataset.id);
@@ -82,6 +89,25 @@ function renderHome() {
                 if (music) playMusicTrack(music);
             });
         });
+
+        // Arrastar com mouse (desktop)
+        const track = document.getElementById('newestCarouselTrack');
+        if (track) {
+            let isDown = false, startX = 0, scrollLeft = 0;
+            track.addEventListener('mousedown', e => {
+                isDown = true;
+                startX = e.pageX - track.offsetLeft;
+                scrollLeft = track.scrollLeft;
+            });
+            track.addEventListener('mouseleave', () => isDown = false);
+            track.addEventListener('mouseup', () => isDown = false);
+            track.addEventListener('mousemove', e => {
+                if (!isDown) return;
+                e.preventDefault();
+                const x = e.pageX - track.offsetLeft;
+                track.scrollLeft = scrollLeft - (x - startX);
+            });
+        }
     }
 
     // ========== BOTÕES "VER TUDO/VER TODOS" ==========

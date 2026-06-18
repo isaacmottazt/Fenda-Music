@@ -322,3 +322,54 @@
         font-size: 18px;
     }
 }
+/* ===== CARROSSEL DE MÚSICAS RECENTES ===== */
+.carousel-container {
+    position: relative;
+    overflow: hidden;
+    margin: 0 -16px; /* sangra até as bordas da tela */
+    padding: 0 16px;
+}
+
+.carousel-track {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+    padding: 4px 4px 12px 4px;
+    cursor: grab;
+}
+
+.carousel-track::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+.carousel-track:active {
+    cursor: grabbing;
+}
+
+.carousel-track .music-card-horizontal {
+    flex: 0 0 140px;
+    scroll-snap-align: start;
+    width: 140px;
+}
+
+.carousel-track .music-card-horizontal img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
+.carousel-track .music-card-horizontal h4 {
+    font-size: 13px;
+}
+
+@media (max-width: 480px) {
+    .carousel-track .music-card-horizontal {
+        flex: 0 0 130px;
+        width: 130px;
+    }
+}
