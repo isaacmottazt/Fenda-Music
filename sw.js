@@ -2,7 +2,7 @@
 // Fenda Music — Service Worker v2
 // ============================================================
 
-const CACHE_NAME = 'fenda-music-v3';
+const CACHE_NAME = 'fenda-music-v2';
 
 // Arquivos locais que ficam em cache (shell do app)
 const SHELL_ASSETS = [
@@ -80,7 +80,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Google Fonts CSS e woff2 → cache first, rede como fallback
-  // Usa mode: 'cors' e credentials: 'omit' para garantir que o cache funcione
   if (
     url.hostname === 'fonts.googleapis.com' ||
     url.hostname === 'fonts.gstatic.com'
@@ -89,23 +88,10 @@ self.addEventListener('fetch', (event) => {
       caches.open(CACHE_NAME).then((cache) =>
         cache.match(event.request).then((cached) => {
           if (cached) return cached;
-          return fetch(new Request(event.request, {
-            mode: 'cors',
-            credentials: 'omit'
-          })).then((response) => {
-            if (response.ok || response.type === 'opaque') {
-              cache.put(event.request, response.clone());
-            }
+          return fetch(event.request).then((response) => {
+            if (response.ok) cache.put(event.request, response.clone());
             return response;
-          }).catch(() => {
-            // Offline sem cache: retorna CSS vazio para não quebrar a página
-            if (url.hostname === 'fonts.googleapis.com') {
-              return new Response('/* font offline */', {
-                headers: { 'Content-Type': 'text/css' }
-              });
-            }
-            return new Response('', { status: 408 });
-          });
+          }).catch(() => cached); // offline: retorna cache mesmo expirado
         })
       )
     );
