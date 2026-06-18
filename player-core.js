@@ -157,151 +157,78 @@ function incrementPlayCount(musicId) {
 
 
 // ===================================================
-// ===== SISTEMA DE CACHE LOCAL (IndexedDB) ==========
+// ===== SISTEMA DE CACHE LOCAL (localStorage) =======
 // ===================================================
-const CACHE_VERSION = 2;
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutos
+// Simples e confiável — sem IndexedDB complexo
+
+function _cacheKey(name) {
+    return `fenda_cache_${name}`;
+}
 
 const CacheDB = {
-    _db: null,
-
-    async open() {
-        if (this._db) return this._db;
-        return new Promise((resolve, reject) => {
-            const req = indexedDB.open('FendaMusicAppCache', CACHE_VERSION);
-            req.onerror = () => reject(req.error);
-            req.onsuccess = () => { this._db = req.result; resolve(this._db); };
-            req.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                // Usa out-of-line keys para suportar qualquer tipo de id (UUID, int, etc.)
-                ['musics','playlists','artists','favorites','history','profile','searchHistory'].forEach(store => {
-                    if (!db.objectStoreNames.contains(store))
-                        db.createObjectStore(store);
-                });
-                if (!db.objectStoreNames.contains('meta'))
-                    db.createObjectStore('meta', { keyPath: 'key' });
-            };
-        });
-    },
-
-    async setMeta(key, value) {
-        const db = await this.open();
-        return new Promise((res, rej) => {
-            const tx = db.transaction('meta', 'readwrite');
-            tx.objectStore('meta').put({ key, value, updatedAt: Date.now() });
-            tx.oncomplete = () => res(true);
-            tx.onerror = () => rej(tx.error);
-        });
-    },
-
-    async getMeta(key) {
-        const db = await this.open();
-        return new Promise((res) => {
-            const tx = db.transaction('meta', 'readonly');
-            const req = tx.objectStore('meta').get(key);
-            req.onsuccess = () => res(req.result?.value ?? null);
-            req.onerror = () => res(null);
-        });
-    },
-
-    async saveList(storeName, items) {
-        const db = await this.open();
-        return new Promise((res, rej) => {
-            const tx = db.transaction(storeName, 'readwrite');
-            const store = tx.objectStore(storeName);
-            store.clear();
-            // Usa índice numérico como chave para evitar conflito com UUIDs
-            items.forEach((item, i) => store.put(item, i));
-            tx.oncomplete = () => res(true);
-            tx.onerror = () => rej(tx.error);
-        });
-    },
-
-    async getList(storeName) {
-        const db = await this.open();
-        return new Promise((res) => {
-            const tx = db.transaction(storeName, 'readonly');
-            const req = tx.objectStore(storeName).getAll(); // getAll() funciona com out-of-line keys
-            req.onsuccess = () => res(req.result ?? []);
-            req.onerror = () => res([]);
-        });
-    },
-
-    async saveSingle(storeName, obj) {
-        return this.saveList(storeName, [obj]);
-    },
-
-    async getSingle(storeName) {
-        const list = await this.getList(storeName);
-        return list[0] ?? null;
-    },
-
-    async isFresh(userId) {
-        const cachedUserId = await this.getMeta('userId');
-        const cachedAt = await this.getMeta('cachedAt');
-        if (!cachedAt || !cachedUserId) return false;
-        if (cachedUserId !== userId) return false;
-        return (Date.now() - cachedAt) < CACHE_TTL_MS;
-    },
-
-    async saveAll({ musics, artists, playlists, favorites, history, profile, searchHistory, userId }) {
+    save(name, data) {
         try {
-            await Promise.all([
-                this.saveList('musics', musics || []),
-                this.saveList('artists', artists || []),
-                this.saveList('playlists', playlists || []),
-                this.saveList('favorites', (favorites || []).map((id, i) => ({ id: i, musicId: id }))),
-                this.saveList('history', (history || []).map((h, i) => ({ ...h, id: i }))),
-                this.saveSingle('profile', profile || {}),
-                this.saveList('searchHistory', (searchHistory || []).map((t, i) => ({ id: i, term: t }))),
-                this.setMeta('userId', userId),
-                this.setMeta('cachedAt', Date.now()),
-            ]);
-            console.log('[Cache] ✅ Dados salvos');
+            localStorage.setItem(_cacheKey(name), JSON.stringify({
+                data,
+                savedAt: Date.now()
+            }));
             return true;
-        } catch (e) {
-            console.warn('[Cache] ⚠️ Erro ao salvar:', e);
+        } catch(e) {
+            console.warn('[Cache] Erro ao salvar ' + name + ':', e);
             return false;
         }
     },
 
-    async loadAll() {
+    load(name) {
         try {
-            const [musics, artists, playlists, favRows, history, profile, searchRows] = await Promise.all([
-                this.getList('musics'),
-                this.getList('artists'),
-                this.getList('playlists'),
-                this.getList('favorites'),
-                this.getList('history'),
-                this.getSingle('profile'),
-                this.getList('searchHistory'),
-            ]);
-            return {
-                musics,
-                artists,
-                playlists,
-                favorites: favRows.map(r => r.musicId),
-                history,
-                profile: profile || {},
-                searchHistory: searchRows.map(r => r.term),
-            };
-        } catch (e) {
-            console.warn('[Cache] ⚠️ Erro ao carregar:', e);
-            return null;
+            const raw = localStorage.getItem(_cacheKey(name));
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed.data ?? null;
+        } catch { return null; }
+    },
+
+    async saveAll({ musics, artists, playlists, favorites, history, profile, searchHistory, userId }) {
+        try {
+            this.save('musics',        musics        || []);
+            this.save('artists',       artists       || []);
+            this.save('playlists_' + userId, playlists || []);
+            this.save('favorites_' + userId, favorites || []);
+            this.save('history_'  + userId, history   || []);
+            this.save('profile_'  + userId, profile   || {});
+            this.save('search_'   + userId, searchHistory || []);
+            this.save('meta_userId',   userId);
+            this.save('meta_savedAt',  Date.now());
+            console.log('[Cache] ✅ Dados salvos no localStorage');
+            return true;
+        } catch(e) {
+            console.warn('[Cache] Erro no saveAll:', e);
+            return false;
         }
     },
 
-    async clear() {
+    async loadAll(userId) {
         try {
-            const db = await this.open();
-            const stores = ['musics','artists','playlists','favorites','history','profile','searchHistory','meta'];
-            return new Promise((res) => {
-                const tx = db.transaction(stores, 'readwrite');
-                stores.forEach(s => tx.objectStore(s).clear());
-                tx.oncomplete = () => res(true);
-                tx.onerror = () => res(false);
-            });
-        } catch(e) { return false; }
+            return {
+                musics:        this.load('musics')               || [],
+                artists:       this.load('artists')              || [],
+                playlists:     this.load('playlists_' + userId)  || [],
+                favorites:     this.load('favorites_' + userId)  || [],
+                history:       this.load('history_'  + userId)   || [],
+                profile:       this.load('profile_'  + userId)   || {},
+                searchHistory: this.load('search_'   + userId)   || [],
+            };
+        } catch { return null; }
+    },
+
+    hasCached(userId) {
+        return !!this.load('meta_userId') && this.load('meta_userId') === userId;
+    },
+
+    async clear() {
+        Object.keys(localStorage)
+            .filter(k => k.startsWith('fenda_cache_'))
+            .forEach(k => localStorage.removeItem(k));
     }
 };
 
@@ -756,84 +683,64 @@ async function _fetchAllFromSupabase() {
     }
 }
 
-// Carrega tudo do cache local (IndexedDB + localStorage)
+// Carrega tudo do cache local (localStorage)
 async function _loadAllFromCache() {
-    // 1. CacheDB (músicas, artistas, playlists, favoritos do Supabase)
-    const cached = await CacheDB.loadAll();
-    if (cached) {
-        AppState.musics        = cached.musics    || [];
-        AppState.artists       = cached.artists   || [];
-        AppState.userPlaylists = cached.playlists || [];
-        AppState.favorites     = new Set(cached.favorites || []);
-        if (cached.profile && cached.profile.full_name) {
-            AppState.userProfile = cached.profile;
-        }
+    const userId = AppState.userId;
+    if (!userId) {
+        console.warn('[Cache] userId não definido ainda');
+        return;
     }
 
-    // 2. UserCacheDB (perfil, playlists, favoritos, histórico do Supabase)
-    if (AppState.userId && window.UserCacheDB) {
-        const [profile, playlists, favorites, history, searchTerms] = await Promise.all([
-            window.UserCacheDB.get('profile',       AppState.userId),
-            window.UserCacheDB.get('playlists',     AppState.userId),
-            window.UserCacheDB.get('favorites',     AppState.userId),
-            window.UserCacheDB.get('history',       AppState.userId),
-            window.UserCacheDB.get('searchHistory', AppState.userId),
-        ]);
-        if (profile)     AppState.userProfile   = profile;
-        if (playlists)   AppState.userPlaylists = playlists;
-        if (favorites)   AppState.favorites     = new Set(favorites);
-        if (searchTerms) {
-            window.recentSearchesGlobal = searchTerms;
+    const cached = await CacheDB.loadAll(userId);
+    if (cached) {
+        if (cached.musics.length)        AppState.musics        = cached.musics;
+        if (cached.artists.length)       AppState.artists       = cached.artists;
+        if (cached.playlists.length)     AppState.userPlaylists = cached.playlists;
+        if (cached.favorites.length)     AppState.favorites     = new Set(cached.favorites);
+        if (cached.profile?.full_name)   AppState.userProfile   = cached.profile;
+        if (cached.searchHistory.length) {
+            window.recentSearchesGlobal = cached.searchHistory;
             if (typeof window.renderRecentSearches === 'function') window.renderRecentSearches();
         }
-        // Histórico do Supabase cache (se localStorage não tiver)
-        if (history && history.length > 0 && AppState.history.length === 0) {
-            AppState.history = history.map(h => ({
-                id: h.music_id,
-                title:  AppState.musics.find(m => m.id === h.music_id)?.title  || '',
-                artist: AppState.musics.find(m => m.id === h.music_id)?.artist || '',
-                cover:  AppState.musics.find(m => m.id === h.music_id)?.cover  || '',
-                listenedSeconds: h.listened_seconds || 0,
-                playedAt: h.played_at ? new Date(h.played_at).getTime() : Date.now()
-            }));
-        }
     }
 
-    // 3. Histórico local (localStorage — sempre mais atualizado)
+    // Histórico local (localStorage — sempre mais atualizado que o cache)
     const localHistory = loadLocalHistory();
     if (localHistory.length > 0) AppState.history = localHistory;
+    else if (cached?.history?.length)  AppState.history = cached.history;
 
-    // 4. Nome do usuário do localStorage
+    // Nome do usuário
     const localUser = loadLocalUserName();
-    if (localUser && (!AppState.userProfile?.full_name)) {
+    if (localUser?.name && !AppState.userProfile?.full_name) {
         AppState.userProfile = { ...AppState.userProfile, full_name: localUser.name };
-        localStorage.setItem('user_email', localUser.email);
+        localStorage.setItem('user_email', localUser.email || '');
     }
 
-    // 5. Músicas baixadas offline — adiciona ao AppState.musics se não estiver
+    // Músicas baixadas offline
     if (window.getAllCachedMusics) {
-        const cachedMusics = await window.getAllCachedMusics();
-        cachedMusics.forEach(meta => {
-            const alreadyIn = AppState.musics.find(m => m.id === meta.musicId);
-            if (!alreadyIn) {
-                AppState.musics.push({
-                    id: meta.musicId,
-                    title: meta.title,
-                    artist: meta.artist,
-                    cover: meta.cover,
-                    src: meta.url,
-                    _offlineOnly: true
-                });
-            }
-        });
+        try {
+            const cachedMusics = await window.getAllCachedMusics();
+            cachedMusics.forEach(meta => {
+                if (!AppState.musics.find(m => m.id === meta.musicId)) {
+                    AppState.musics.push({
+                        id: meta.musicId,
+                        title: meta.title,
+                        artist: meta.artist,
+                        cover: meta.cover,
+                        src: meta.url,
+                        _offlineOnly: true
+                    });
+                }
+            });
+        } catch(e) { console.warn('[Cache] Erro ao carregar músicas offline:', e); }
     }
 
-    console.log('[Cache] ✅ Carregado offline:', {
+    console.log('[Cache] ✅ Cache carregado:', {
         músicas: AppState.musics.length,
         playlists: AppState.userPlaylists.length,
         favoritos: AppState.favorites.size,
         histórico: AppState.history.length,
-        nome: AppState.userProfile?.full_name
+        nome: AppState.userProfile?.full_name || '(sem nome)'
     });
 }
 
