@@ -8,9 +8,19 @@ function initAudioAndLyricsEngine() {
         const duration = DOM.audio.duration || 0;
 
         if (duration > 0) {
-            const pct = (current / duration) * 100;
-            if (DOM.progressFill) DOM.progressFill.style.width = `${pct}%`;
-            if (DOM.miniProgressBar) DOM.miniProgressBar.style.width = `${pct}%`;
+            const pct = current / duration;
+
+            // Seek bar principal
+            if (DOM.progressFill) DOM.progressFill.style.width = `${pct * 100}%`;
+            const thumb = document.getElementById('progressThumb');
+            if (thumb) thumb.style.left = `${pct * 100}%`;
+
+            // Anel SVG circular da mini barra
+            const ring = document.getElementById('miniRingFill');
+            if (ring) {
+                const circumference = 144.5;
+                ring.style.strokeDashoffset = circumference * (1 - pct);
+            }
         }
 
         if (DOM.currentTimeTxt) DOM.currentTimeTxt.textContent = formatTime(current);
@@ -41,18 +51,81 @@ function initAudioAndLyricsEngine() {
 
     
     const prevBtn = document.getElementById('prevBtn');
-    
-    if (prevBtn) prevBtn.addEventListener('click', () => handlePrevTrack());
+    const nextBtn = document.getElementById('nextBtn');
 
-    if (DOM.progressBar) {
+    if (prevBtn) prevBtn.addEventListener('click', () => {
+        const currentTime = DOM.audio ? DOM.audio.currentTime : 0;
+
+        if (currentTime > 3) {
+            // Passou de 3 segundos: reinicia a música atual
+            DOM.audio.currentTime = 0;
+        } else {
+            // Menos de 3 segundos: vai para a música anterior
+            handlePrevTrack();
+        }
+    });
+
+    if (nextBtn) nextBtn.addEventListener('click', () => handleNextTrack());
+
+    // ── Seek bar interativo (clique + arrastar) ──────────────────────
+    const seekBar = document.getElementById('progressBar');
+    const seekFill = document.getElementById('progressFill');
+    const seekThumb = document.getElementById('progressThumb');
+
+    function seekTo(clientX) {
+        if (!seekBar || !DOM.audio) return;
+        const rect = seekBar.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const duration = DOM.audio.duration || 0;
+        if (duration > 0) {
+            DOM.audio.currentTime = pct * duration;
+            if (seekFill) seekFill.style.width = (pct * 100) + '%';
+            if (seekThumb) seekThumb.style.left = (pct * 100) + '%';
+        }
+    }
+
+    if (seekBar) {
+        let dragging = false;
+
+        // Toque / mouse down — começa arrastar
+        seekBar.addEventListener('mousedown', (e) => {
+            dragging = true;
+            seekBar.classList.add('dragging');
+            seekTo(e.clientX);
+        });
+        seekBar.addEventListener('touchstart', (e) => {
+            dragging = true;
+            seekBar.classList.add('dragging');
+            seekTo(e.touches[0].clientX);
+        }, { passive: true });
+
+        // Mover
+        document.addEventListener('mousemove', (e) => {
+            if (dragging) seekTo(e.clientX);
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (dragging) seekTo(e.touches[0].clientX);
+        }, { passive: true });
+
+        // Soltar
+        document.addEventListener('mouseup', () => {
+            if (dragging) { dragging = false; seekBar.classList.remove('dragging'); }
+        });
+        document.addEventListener('touchend', () => {
+            if (dragging) { dragging = false; seekBar.classList.remove('dragging'); }
+        });
+
+        // Clique simples
+        seekBar.addEventListener('click', (e) => seekTo(e.clientX));
+    }
+
+    // Compat com DOM.progressBar antigo
+    if (DOM.progressBar && DOM.progressBar !== seekBar) {
         DOM.progressBar.addEventListener('click', (e) => {
             const rect = DOM.progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
+            const pct = (e.clientX - rect.left) / rect.width;
             const duration = DOM.audio.duration || 0;
-            if (duration > 0) {
-                DOM.audio.currentTime = (clickX / width) * duration;
-            }
+            if (duration > 0) DOM.audio.currentTime = pct * duration;
         });
     }
 
@@ -69,14 +142,60 @@ function initAudioAndLyricsEngine() {
         });
     }
 
-    const scroller = document.getElementById('lyricsScroller');
-    if (scroller) {
-        scroller.addEventListener('scroll', () => {
-            AppState.isUserScrolling = true;
-            clearTimeout(AppState.userScrollTimeout);
-            AppState.userScrollTimeout = setTimeout(() => { AppState.isUserScrolling = false; }, 3000);
+    // ── Mini barra — todos os listeners via JS ──────────────────────
+    const miniBar      = document.getElementById('playerBottomBar');
+    const miniCoverWrap = document.getElementById('miniCoverWrap');
+    const miniInfoArea = document.getElementById('miniInfoArea');
+    const miniPlayBtnInit = document.getElementById('playerBottomPlayBtn');
+
+    // Clique no cover → play/pause (NÃO abre o player)
+    if (miniCoverWrap) {
+        miniCoverWrap.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.togglePlayMusic === 'function') window.togglePlayMusic();
         });
     }
+
+    // Clique no play button (filho do cover) → mesma coisa
+    if (miniPlayBtnInit) {
+        miniPlayBtnInit.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.togglePlayMusic === 'function') window.togglePlayMusic();
+        });
+    }
+
+    // Clique na info (título/artista) → abre o player expandido
+    if (miniInfoArea) {
+        miniInfoArea.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.expandLyricsScreen === 'function') window.expandLyricsScreen();
+        });
+    }
+
+    // Clique no resto da barra (fora do cover e info) → abre o player
+    if (miniBar) {
+        miniBar.addEventListener('click', () => {
+            if (typeof window.expandLyricsScreen === 'function') window.expandLyricsScreen();
+        });
+    }
+
+    // Detecta quando usuário rola manualmente (playerScrollArea é o scroll real)
+    function attachScrollListener() {
+        const scrollArea = document.getElementById('playerScrollArea');
+        if (scrollArea && !scrollArea._userScrollListener) {
+            scrollArea._userScrollListener = true;
+            scrollArea.addEventListener('scroll', () => {
+                AppState.isUserScrolling = true;
+                clearTimeout(AppState.userScrollTimeout);
+                AppState.userScrollTimeout = setTimeout(() => {
+                    AppState.isUserScrolling = false;
+                }, 5000); // 5s de pausa antes de retomar auto-scroll
+            }, { passive: true });
+        }
+    }
+    attachScrollListener();
+    // Tenta novamente após render (player pode não estar no DOM ainda)
+    setTimeout(attachScrollListener, 1000);
 
     // ===== Botão de compartilhar (movido para fora do timeupdate) =====
     const shareBtn = document.getElementById('shareMusicBtn');
@@ -126,6 +245,8 @@ function parseLyrics(text) {
 function buildLyricsMarkup() {
     if (!DOM.lyricsContainer) return;
     DOM.lyricsContainer.innerHTML = '';
+    _lastLyricIndex = -1; // reseta ao trocar de música
+    if (_lyricsScrollFrame) { cancelAnimationFrame(_lyricsScrollFrame); _lyricsScrollFrame = null; }
 
     if (AppState.lyricsData.length === 0) {
         DOM.lyricsContainer.innerHTML = `<div class="lyric-line active" style="text-align:center; padding-top:40px;">Letra Instrumental ou Não Disponível</div>`;
@@ -144,49 +265,208 @@ function buildLyricsMarkup() {
     });
 }
 
+let _lastLyricIndex = -1;
+let _lyricsScrollFrame = null;
+let _lyricsScrollTarget = null;
+let _lyricsCurrentScroll = null;
+
 function updateLyricsHighlight(currentTime) {
     if (AppState.lyricsData.length === 0) return;
-    
+
     let activeIndex = -1;
     for (let i = 0; i < AppState.lyricsData.length; i++) {
-        if (currentTime >= AppState.lyricsData[i].time) {
-            activeIndex = i;
+        if (currentTime >= AppState.lyricsData[i].time) activeIndex = i;
+        else break;
+    }
+
+    if (activeIndex === -1) return;
+
+    // Destaca a linha ativa
+    if (activeIndex !== _lastLyricIndex) {
+        _lastLyricIndex = activeIndex;
+        document.querySelectorAll('.lyric-line').forEach(el => el.classList.remove('active'));
+        const activeLine = document.getElementById(`lyric-line-${activeIndex}`);
+        if (activeLine) {
+            activeLine.classList.add('active');
+            _scrollToLyricLine(activeLine);
+        }
+    }
+}
+
+function _scrollToLyricLine(lineEl) {
+    if (AppState.isUserScrolling) return;
+
+    const scrollArea = document.getElementById('playerScrollArea');
+    if (!scrollArea) return;
+
+    const pageH = scrollArea.clientHeight;
+    const isOnLyrics = scrollArea.scrollTop > pageH * 0.5;
+    if (!isOnLyrics) return;
+
+    // Posição absoluta da linha dentro do scrollArea
+    const scrollAreaRect = scrollArea.getBoundingClientRect();
+    const lineRect = lineEl.getBoundingClientRect();
+    const lineAbsTop = lineRect.top - scrollAreaRect.top + scrollArea.scrollTop;
+
+    // Alvo: linha no terço superior da tela
+    const target = lineAbsTop - pageH * 0.30;
+
+    _smoothScrollTo(scrollArea, target);
+}
+
+// Animação de scroll suave com requestAnimationFrame
+function _smoothScrollTo(el, target) {
+    if (_lyricsScrollFrame) cancelAnimationFrame(_lyricsScrollFrame);
+
+    const start = el.scrollTop;
+    const distance = target - start;
+    const duration = 600; // ms — suave mas não lento demais
+    let startTime = null;
+
+    function ease(t) {
+        // Curva easeInOutCubic
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function step(timestamp) {
+        if (!startTime) startTime = timestamp;
+        const elapsed = timestamp - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        el.scrollTop = start + distance * ease(progress);
+
+        if (progress < 1) {
+            _lyricsScrollFrame = requestAnimationFrame(step);
         } else {
-            break;
+            _lyricsScrollFrame = null;
         }
     }
 
-    if (activeIndex !== -1) {
-        document.querySelectorAll('.lyric-line').forEach(el => el.classList.remove('active'));
-        const activeLineEl = document.getElementById(`lyric-line-${activeIndex}`);
-        if (activeLineEl) {
-            activeLineEl.classList.add('active');
-            const scroller = document.getElementById('lyricsScroller');
-            if (scroller && !AppState.isUserScrolling) {
-                const scrollerHeight = scroller.clientHeight;
-                const lineTop = activeLineEl.offsetTop;
-                const lineHeight = activeLineEl.clientHeight;
-                scroller.scrollTop = lineTop - scrollerHeight / 2 + lineHeight / 2;
-            }
-        }
-    }
+    _lyricsScrollFrame = requestAnimationFrame(step);
 }
 
 function updatePlayerVisibility(music) {
     if (!music) return;
+
+    // Mini barra
     if (DOM.playerBottomBar) DOM.playerBottomBar.style.display = 'flex';
-    if (DOM.playerBottomCover) DOM.playerBottomCover.src = music.cover || 'https://via.placeholder.com/150';
+    if (DOM.playerBottomCover) DOM.playerBottomCover.src = music.cover || '';
     if (DOM.playerBottomTitle) DOM.playerBottomTitle.textContent = music.title;
     if (DOM.playerBottomArtist) DOM.playerBottomArtist.textContent = music.artist;
 
+    // Player expandido — header
     if (DOM.lyricsTrackTitle) DOM.lyricsTrackTitle.textContent = music.title;
     if (DOM.lyricsTrackArtist) DOM.lyricsTrackArtist.textContent = music.artist;
+
+    // Cover
+    const cover = document.getElementById('playerExpandedCover');
+    if (cover) cover.src = music.cover || '';
+
+    // Mini cover (player expandido)
+    const miniCover = document.getElementById('playerMiniCover');
+    if (miniCover) miniCover.src = music.cover || '';
+
+    // Botão favorito da mini barra
+    const miniFavBtn = document.getElementById('miniFavBtn');
+    if (miniFavBtn && AppState.favorites) {
+        const isFav = AppState.favorites.has(music.id);
+        miniFavBtn.classList.toggle('active', isFav);
+        miniFavBtn.querySelector('.material-symbols-rounded').textContent = isFav ? 'favorite' : 'favorite_border';
+        const newFav = miniFavBtn.cloneNode(true);
+        miniFavBtn.parentNode.replaceChild(newFav, miniFavBtn);
+        newFav.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.toggleFavoriteTrack === 'function') window.toggleFavoriteTrack(music.id);
+            setTimeout(() => updatePlayerVisibility(music), 100);
+        });
+    }
+
+    // Botão ⋮ da mini barra
+    const miniMoreBtn = document.getElementById('playerBottomMoreBtn');
+    if (miniMoreBtn) {
+        const newMore = miniMoreBtn.cloneNode(true);
+        miniMoreBtn.parentNode.replaceChild(newMore, miniMoreBtn);
+        newMore.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.openContextMenu === 'function') window.openContextMenu(music);
+        });
+    }
+
+    // Botão play/pause no cover da mini barra
+    const miniPlayBtn = document.getElementById('playerBottomPlayBtn');
+    if (miniPlayBtn) {
+        const newBtn = miniPlayBtn.cloneNode(true);
+        miniPlayBtn.parentNode.replaceChild(newBtn, miniPlayBtn);
+        newBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof window.togglePlayMusic === 'function') window.togglePlayMusic();
+        });
+    }
+
+    // Títulos
+    const title = document.getElementById('playerExpandedTitle');
+    if (title) title.textContent = music.title;
+    const artist = document.getElementById('playerExpandedArtist');
+    if (artist) artist.textContent = music.artist;
+    const headerTitle = document.getElementById('lyricsTrackTitle');
+    if (headerTitle) headerTitle.textContent = music.title;
+    const miniTitle = document.getElementById('playerMiniTitle');
+    if (miniTitle) miniTitle.textContent = music.title;
+    const miniArtist = document.getElementById('playerMiniArtist');
+    if (miniArtist) miniArtist.textContent = music.artist;
+
+    // Contexto (playlist ou biblioteca)
+    const ctxEl = document.getElementById('playerContext');
+    if (ctxEl) {
+        const ctx = AppState.playContext?.source === 'playlist' ? 'TOCANDO DA PLAYLIST' : 'FENDA MUSIC';
+        ctxEl.textContent = ctx;
+    }
+
+    // Fundo dinâmico com cor da capa
+    if (music.cover) {
+        _extractColorFromCover(music.cover).then(color => {
+            const bg = document.getElementById('playerBg');
+            if (bg) bg.style.background = `linear-gradient(160deg, ${color} 0%, #0c0916 65%)`;
+        });
+    }
+
+    // Botão favorito
+    const favBtn = document.getElementById('playerExpandedFavBtn');
+    if (favBtn && AppState.favorites) {
+        const isFav = AppState.favorites.has(music.id);
+        favBtn.classList.toggle('active', isFav);
+        favBtn.querySelector('.material-symbols-rounded').textContent = isFav ? 'favorite' : 'favorite_border';
+        const newFav = favBtn.cloneNode(true);
+        favBtn.parentNode.replaceChild(newFav, favBtn);
+        newFav.addEventListener('click', () => {
+            if (typeof window.toggleFavoriteTrack === 'function') window.toggleFavoriteTrack(music.id);
+            setTimeout(() => updatePlayerVisibility(music), 100);
+        });
+    }
+
+    // Botão ⋮ no player
+    const moreBtn = document.getElementById('playerMoreBtn');
+    if (moreBtn) {
+        const newMore = moreBtn.cloneNode(true);
+        moreBtn.parentNode.replaceChild(newMore, moreBtn);
+        newMore.addEventListener('click', () => {
+            if (typeof window.openContextMenu === 'function') window.openContextMenu(music);
+        });
+    }
+
+    // Setup scroll para mostrar mini controles ao ver letras
+    _setupPlayerScroll();
 }
 
 function updatePlayerUIState() {
     const icon = AppState.playing ? 'pause' : 'play_arrow';
-    if (DOM.playerBottomPlayBtn) DOM.playerBottomPlayBtn.innerHTML = `<span class="material-symbols-rounded">${icon}</span>`;
+    // Botão play principal (player expandido)
     if (DOM.bigPlayBtn) DOM.bigPlayBtn.innerHTML = `<span class="material-symbols-rounded">${icon}</span>`;
+    // Mini play no cover da barra inferior
+    const bottomPlayBtn = document.getElementById('playerBottomPlayBtn');
+    if (bottomPlayBtn) bottomPlayBtn.innerHTML = `<span class="material-symbols-rounded">${icon}</span>`;
+    // Mini play no player de letras
+    const miniPlay = document.getElementById('miniPlayBtn');
+    if (miniPlay) miniPlay.innerHTML = `<span class="material-symbols-rounded">${icon}</span>`;
 
     document.querySelectorAll('.inline-play-btn').forEach(btn => {
         const cardId = parseInt(btn.getAttribute('data-id'));
@@ -235,10 +515,83 @@ function updateMediaSession(music) {
     });
 }
 
-function expandLyricsScreen() { if (DOM.lyricsFullScreen) DOM.lyricsFullScreen.classList.add('expanded'); }
-function collapseLyricsScreen() { if (DOM.lyricsFullScreen) DOM.lyricsFullScreen.classList.remove('expanded'); }
+function expandLyricsScreen() {
+    const el = document.getElementById('lyricsFullScreen');
+    if (el) el.classList.add('expanded');
+}
+function collapseLyricsScreen() {
+    const el = document.getElementById('lyricsFullScreen');
+    if (el) el.classList.remove('expanded');
+}
 
 // Exportações (sem handleNextTrack/handlePrevTrack, pois já vêm do core)
+// Extrai cor dominante da capa via canvas
+async function _extractColorFromCover(src) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 10; canvas.height = 10;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, 10, 10);
+                const d = ctx.getImageData(0, 0, 10, 10).data;
+                let r = 0, g = 0, b = 0;
+                for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i+1]; b += d[i+2]; }
+                const n = d.length / 4;
+                // Escurece um pouco para não ficar muito vibrante
+                resolve(`rgb(${Math.floor(r/n*0.6)}, ${Math.floor(g/n*0.6)}, ${Math.floor(b/n*0.6)})`);
+            };
+            img.onerror = () => resolve('#1a1040');
+            img.src = src;
+        } catch { resolve('#1a1040'); }
+    });
+}
+
+// Configura scroll do player para mostrar mini controles ao ver letras
+function _setupPlayerScroll() {
+    const scrollArea = document.getElementById('playerScrollArea');
+    const miniControls = document.getElementById('playerMiniControls');
+    const miniPlay = document.getElementById('miniPlayBtn');
+    const miniPrev = document.getElementById('miniPrevBtn');
+    const miniNext = document.getElementById('miniNextBtn');
+
+    if (!scrollArea) return;
+
+    // Remove listener anterior
+    scrollArea._scrollHandler && scrollArea.removeEventListener('scroll', scrollArea._scrollHandler);
+
+    scrollArea._scrollHandler = () => {
+        const scrolled = scrollArea.scrollTop;
+        const pageH = scrollArea.clientHeight;
+        // Mostra mini controles quando estiver na página de letras (scrolled > 80% da altura)
+        const showMini = scrolled > pageH * 0.8;
+        if (miniControls) miniControls.classList.toggle('visible', showMini);
+    };
+    scrollArea.addEventListener('scroll', scrollArea._scrollHandler, { passive: true });
+
+    // Botões do mini controle
+    if (miniPlay) {
+        const newBtn = miniPlay.cloneNode(true);
+        miniPlay.parentNode.replaceChild(newBtn, miniPlay);
+        newBtn.addEventListener('click', () => togglePlayMusic());
+    }
+    if (miniPrev) {
+        const newBtn = miniPrev.cloneNode(true);
+        miniPrev.parentNode.replaceChild(newBtn, miniPrev);
+        newBtn.addEventListener('click', () => handlePrevTrack());
+    }
+    if (miniNext) {
+        const newBtn = miniNext.cloneNode(true);
+        miniNext.parentNode.replaceChild(newBtn, miniNext);
+        newBtn.addEventListener('click', () => handleNextTrack());
+    }
+}
+
+// Atualizar ícone do mini play quando estado muda
+const _origUpdateUIState = window.updatePlayerUIState;
+
 window.initAudioAndLyricsEngine = initAudioAndLyricsEngine; 
 window.parseLyrics = parseLyrics; 
 window.buildLyricsMarkup = buildLyricsMarkup; 

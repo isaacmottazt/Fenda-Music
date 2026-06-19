@@ -18,7 +18,13 @@ const AppState = {
     userScrollTimeout: null,
     history: [],        // array de { id, title, artist, cover, listenedSeconds, playedAt }
     MAX_HISTORY: 50,
-    queue: [],
+    queue: [],           // fila manual (adicionada pelo usuário)
+    autoQueue: [],       // fila automática (gerada pelo contexto)
+    playContext: {       // de onde a música foi tocada
+        source: 'library',
+        playlistId: null,
+        trackList: [],
+    },
     userId: null,
     userProfile: { full_name: '', avatar_url: null, bio: '' }
 };
@@ -185,31 +191,25 @@ const CacheDB = {
         } catch { return null; }
     },
 
-    async saveAll({ musics, artists, playlists, favorites, history, profile, searchHistory, userId }) {
-        // Salva músicas compactas (só campos essenciais para não estourar o localStorage)
-        const musicsCompact = (musics || []).map(m => ({
-            id: m.id, title: m.title, artist: m.artist,
-            cover: m.cover, src: m.src, genre: m.genre || null
-        }));
+    async saveAll({ playlists, favorites, history, profile, searchHistory, userId }) {
+        // Músicas NÃO são salvas — só as baixadas ficam no IndexedDB de áudio
         const results = {
-            musics:    this.save('musics', musicsCompact),
             playlists: this.save('playlists_' + userId, playlists || []),
             favorites: this.save('favorites_' + userId, favorites || []),
             history:   this.save('history_'   + userId, (history || []).slice(0, 30)),
             profile:   this.save('profile_'   + userId, profile || {}),
             userId:    this.save('meta_userId', userId),
         };
-        console.log('[Cache] saveAll resultados:', results);
         const allOk = Object.values(results).every(Boolean);
-        console.log('[Cache] ' + (allOk ? '✅ Tudo salvo' : '⚠️ Alguns itens falharam'));
+        console.log('[Cache] ' + (allOk ? 'Dados do usuário salvos' : 'Alguns itens falharam'));
         return allOk;
     },
 
     async loadAll(userId) {
         try {
             return {
-                musics:        this.load('musics')               || [],
-                artists:       this.load('artists')              || [],
+                musics:        [],   // músicas sempre vêm do Supabase ou do áudio offline
+                artists:       [],
                 playlists:     this.load('playlists_' + userId)  || [],
                 favorites:     this.load('favorites_' + userId)  || [],
                 history:       this.load('history_'   + userId)  || [],
@@ -400,6 +400,67 @@ async function toggleOfflineMusic(music) {
     }
 }
 
+
+// ===== FILA AUTOMÁTICA =====
+
+// Gera a fila automática baseada no contexto atual
+function buildAutoQueue(currentMusicId, trackList, isShuffle) {
+    if (!trackList || trackList.length === 0) return [];
+
+    const currentIdx = trackList.findIndex(m => m.id === currentMusicId);
+    let remaining;
+
+    if (isShuffle) {
+        // Modo aleatório: embaralha todas exceto a atual
+        remaining = trackList.filter(m => m.id !== currentMusicId);
+        for (let i = remaining.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+        }
+    } else {
+        // Modo normal: músicas após a atual, depois volta do início
+        const after  = trackList.slice(currentIdx + 1);
+        const before = trackList.slice(0, currentIdx);
+        remaining = [...after, ...before];
+    }
+
+    return remaining;
+}
+
+// Atualiza o contexto e regenera a fila automática
+function setPlayContext(source, trackList, playlistId = null) {
+    AppState.playContext = { source, playlistId, trackList: [...trackList] };
+    AppState.autoQueue = buildAutoQueue(AppState.currentMusicId, trackList, AppState.isShuffle);
+    if (typeof window.renderQueuePanel === 'function') window.renderQueuePanel();
+}
+
+// Retorna a próxima música (fila manual tem prioridade sobre automática)
+function getNextMusic() {
+    if (AppState.queue.length > 0) {
+        return AppState.queue.shift();
+    }
+    if (AppState.autoQueue.length > 0) {
+        return AppState.autoQueue.shift();
+    }
+    return null;
+}
+
+// Retorna a música anterior no contexto atual
+function getPrevMusic() {
+    // Usa o contexto atual ou a lista completa de músicas como fallback
+    const trackList = AppState.playContext?.trackList?.length > 0
+        ? AppState.playContext.trackList
+        : AppState.musics;
+    if (!trackList || trackList.length === 0) return null;
+    const currentIdx = trackList.findIndex(m => m.id === AppState.currentMusicId);
+    if (currentIdx <= 0) return null;
+    return trackList[currentIdx - 1];
+}
+
+window.setPlayContext = setPlayContext;
+window.buildAutoQueue = buildAutoQueue;
+window.getNextMusic = getNextMusic;
+
 // ===== FILA (sem mudanças) =====
 function addToQueue(music, insertNext = false) {
     if (!music) return;
@@ -483,6 +544,11 @@ async function playMusicTrack(music) {
             if (typeof window.updatePlayerVisibility === 'function') window.updatePlayerVisibility(music);
             if (typeof window.updatePlayerUIState === 'function') window.updatePlayerUIState();
             if (typeof window.updateMediaSession === 'function') window.updateMediaSession(music);
+            // Regenera a fila automática se o contexto mudou ou a fila acabou
+            if (AppState.autoQueue.length === 0 && AppState.playContext.trackList.length > 0) {
+                AppState.autoQueue = buildAutoQueue(music.id, AppState.playContext.trackList, AppState.isShuffle);
+            }
+            if (typeof window.renderQueuePanel === 'function') window.renderQueuePanel();
         })
         .catch(() => {
             AppState.playing = false;
@@ -501,24 +567,31 @@ function togglePlayMusic(music) {
 }
 
 function handleNextTrack() {
-    if (AppState.queue.length > 0) {
-        const nextMusic = AppState.queue.shift();
+    const next = getNextMusic();
+    if (next) {
         if (typeof window.renderQueue === 'function') window.renderQueue();
-        playMusicTrack(nextMusic);
+        if (typeof window.renderQueuePanel === 'function') window.renderQueuePanel();
+        playMusicTrack(next);
         return;
     }
-    if (AppState.musics.length === 0) return;
-    let nextIndex = 0;
-    if (AppState.isShuffle) {
-        nextIndex = Math.floor(Math.random() * AppState.musics.length);
-    } else {
-        const currentIdx = AppState.musics.findIndex(m => m.id === AppState.currentMusicId);
-        nextIndex = (currentIdx + 1) % AppState.musics.length;
+    // Fila vazia: reinicia a fila automática do contexto
+    const { trackList } = AppState.playContext;
+    if (trackList && trackList.length > 0) {
+        AppState.autoQueue = buildAutoQueue(AppState.currentMusicId, trackList, AppState.isShuffle);
+        const next2 = AppState.autoQueue.shift();
+        if (next2) { playMusicTrack(next2); return; }
     }
+    // Fallback: próxima da biblioteca
+    if (AppState.musics.length === 0) return;
+    const currentIdx = AppState.musics.findIndex(m => m.id === AppState.currentMusicId);
+    const nextIndex = (currentIdx + 1) % AppState.musics.length;
     playMusicTrack(AppState.musics[nextIndex]);
 }
 
 function handlePrevTrack() {
+    const prev = getPrevMusic();
+    if (prev) { playMusicTrack(prev); return; }
+    // Fallback: anterior na biblioteca
     if (AppState.musics.length === 0) return;
     const currentIdx = AppState.musics.findIndex(m => m.id === AppState.currentMusicId);
     let prevIndex = currentIdx - 1;
@@ -593,23 +666,28 @@ async function loadInitialData() {
     // (Independente de estar online ou offline, e independente do TTL)
     await _loadAllFromCache();
 
+    // Define contexto padrão: todas as músicas da biblioteca
+    if (AppState.musics.length > 0 && typeof setPlayContext === 'function') {
+        setPlayContext('library', AppState.musics);
+    }
+
     // ── PASSO 2: se online, atualiza em background ──────────────────
     if (navigator.onLine) {
-        console.log('[Cache] 🌐 Online — atualizando dados em background...');
+        console.log('[Cache]  Online — atualizando dados em background...');
         _fetchAllFromSupabase().then(() => {
             if (typeof window.renderHome === 'function') window.renderHome();
             if (typeof window.renderLibrary === 'function') window.renderLibrary();
             if (typeof window.renderProfile === 'function') window.renderProfile();
         }).catch(e => console.warn('[Cache] Falha ao atualizar online:', e));
     } else {
-        console.log('[Cache] 📴 Offline — usando dados do cache');
+        console.log('[Cache]  Offline — usando dados do cache');
     }
 }
 
 async function _fetchAllFromSupabase() {
     // ── Se offline, carrega tudo do cache e para por aqui ───────────
     if (!navigator.onLine) {
-        console.log('[Cache] 📴 Offline — carregando tudo do cache local...');
+        console.log('[Cache]  Offline — carregando tudo do cache local...');
         await _loadAllFromCache();
         return;
     }
@@ -669,11 +747,9 @@ async function _fetchAllFromSupabase() {
         if (typeof window.renderRecentSearches === 'function') window.renderRecentSearches();
     }
 
-    // ── Salva tudo no cache para a próxima vez ────────────────────────
+    // ── Salva dados do usuário no cache (músicas não são salvas) ────────
     if (AppState.userId) {
         CacheDB.saveAll({
-            musics:        AppState.musics,
-            artists:       AppState.artists,
             playlists:     AppState.userPlaylists,
             favorites:     [...AppState.favorites],
             history:       AppState.history,
@@ -694,8 +770,7 @@ async function _loadAllFromCache() {
 
     const cached = await CacheDB.loadAll(userId);
     if (cached) {
-        if (cached.musics.length)        AppState.musics        = cached.musics;
-        if (cached.artists.length)       AppState.artists       = cached.artists;
+        // Músicas não vêm do cache — só playlists, favoritos, perfil e histórico
         if (cached.playlists.length)     AppState.userPlaylists = cached.playlists;
         if (cached.favorites.length)     AppState.favorites     = new Set(cached.favorites);
         if (cached.profile?.full_name)   AppState.userProfile   = cached.profile;
@@ -736,7 +811,7 @@ async function _loadAllFromCache() {
         } catch(e) { console.warn('[Cache] Erro ao carregar músicas offline:', e); }
     }
 
-    console.log('[Cache] ✅ Cache carregado:', {
+    console.log('[Cache]  Cache carregado:', {
         músicas: AppState.musics.length,
         playlists: AppState.userPlaylists.length,
         favoritos: AppState.favorites.size,
@@ -753,7 +828,7 @@ async function _refreshFromSupabaseInBackground() {
         if (typeof window.renderHome === 'function') window.renderHome();
         if (typeof window.renderLibrary === 'function') window.renderLibrary();
         if (typeof window.renderProfile === 'function') window.renderProfile();
-        console.log('[Cache] 🔄 Dados atualizados em background');
+        console.log('[Cache]  Dados atualizados em background');
     } catch(e) {
         console.warn('[Cache] Background refresh falhou (offline?):', e);
     }
@@ -800,7 +875,7 @@ function calculateTotalMinutesListened() {
 // ===== INICIALIZAÇÃO PRINCIPAL (COM CRIAÇÃO DE PERFIL AUTOMÁTICA) =====
 document.addEventListener('DOMContentLoaded', async () => {
 
-    // ✅ PASSO 1: inicializa abas e UI imediatamente, sem esperar nada
+    //  PASSO 1: inicializa abas e UI imediatamente, sem esperar nada
     initTabs();
     initKeyboardShortcuts();
     if (typeof window.initMenusAndSearch === 'function') window.initMenusAndSearch();
@@ -821,7 +896,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // ✅ PASSO 2: agora verifica sessão em paralelo
+    // Botão de três pontinhos na mini barra do player
+    const moreBtn = document.getElementById('playerBottomMoreBtn');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const currentMusic = AppState.musics.find(m => m.id === AppState.currentMusicId);
+            if (currentMusic && typeof window.openContextMenu === 'function') {
+                window.openContextMenu(currentMusic);
+            }
+        });
+    }
+
+    //  PASSO 2: agora verifica sessão em paralelo
     const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
     
     if (sessionError) {
@@ -877,7 +964,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     console.error('Erro ao criar perfil:', insertError);
                     return false;
                 }
-                console.log('✅ Perfil criado para:', userName);
+                console.log(' Perfil criado para:', userName);
                 return true;
             }
             return true;
@@ -887,7 +974,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
-    // ✅ PASSO 3: salva userId e email no localStorage para acesso offline
+    //  PASSO 3: salva userId e email no localStorage para acesso offline
     localStorage.setItem('user_email', userEmail);
     localStorage.setItem('fenda_userId', AppState.userId);
 
@@ -920,7 +1007,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     } else {
         // Offline: usa dados locais
-        console.log('[Cache] 📴 Offline no login — usando dados locais');
+        console.log('[Cache]  Offline no login — usando dados locais');
         if (!AppState.userProfile?.full_name) {
             AppState.userProfile = { full_name: userName, email: userEmail };
         }
@@ -967,68 +1054,6 @@ function showConfirmDialog(title, message, onConfirm, onCancel) {
 window.showConfirmDialog = showConfirmDialog;
 
 
-// ===== DIAGNÓSTICO DE CACHE (remover depois de testar) =====
-window.mostrarDiagnostico = async function() {
-    const userId = window.AppState?.userId;
-    const musics = window.AppState?.musics?.length || 0;
-    const playlists = window.AppState?.userPlaylists?.length || 0;
-    const nome = window.AppState?.userProfile?.full_name || '(vazio)';
-    const historico = window.AppState?.history?.length || 0;
-    const online = navigator.onLine;
-
-    const fendaKeys = Object.keys(localStorage).filter(k => k.startsWith('fenda_'));
-    const musicsCache = localStorage.getItem('fenda_cache_musics');
-    const musicsCacheCount = musicsCache ? (JSON.parse(musicsCache)?.length || 0) : 0;
-
-    let totalKB = 0;
-    for (let k in localStorage) {
-        if (localStorage.hasOwnProperty(k)) totalKB += (localStorage[k].length * 2) / 1024;
-    }
-
-    const msg = [
-        '=== DIAGNÓSTICO ===',
-        'Online: ' + (online ? '✅ SIM' : '❌ NÃO'),
-        'UserId: ' + (userId ? '✅ ' + userId.substring(0,8) + '...' : '❌ NULL'),
-        'Músicas no app: ' + musics,
-        'Músicas no cache: ' + musicsCacheCount,
-        'Playlists: ' + playlists,
-        'Histórico: ' + historico,
-        'Nome: ' + nome,
-        'Chaves fenda_: ' + fendaKeys.length,
-        'localStorage: ' + totalKB.toFixed(1) + 'KB',
-        '',
-        'Chaves salvas:',
-        ...fendaKeys.map(k => '• ' + k),
-    ].join('\n');
-
-    // Salva agora e mostra resultado
-    if (window.CacheDB && userId) {
-        const ok = await window.CacheDB.saveAll({
-            musics:        window.AppState.musics || [],
-            artists:       window.AppState.artists || [],
-            playlists:     window.AppState.userPlaylists || [],
-            favorites:     [...(window.AppState.favorites || [])],
-            history:       window.AppState.history || [],
-            profile:       window.AppState.userProfile || {},
-            searchHistory: window.recentSearchesGlobal || [],
-            userId,
-        });
-        alert(msg + '\n\nSave agora: ' + (ok ? '✅ OK' : '❌ FALHOU'));
-    } else {
-        alert(msg + '\n\nCacheDB: ' + (window.CacheDB ? '✅' : '❌ não encontrado'));
-    }
-};
-
-// Botão flutuante de diagnóstico
-window.addEventListener('load', () => {
-    const btn = document.createElement('button');
-    btn.innerText = '🔍 Cache';
-    btn.style.cssText = 'position:fixed;bottom:120px;right:16px;z-index:99999;background:#7c3aed;color:white;border:none;border-radius:20px;padding:8px 14px;font-size:13px;cursor:pointer;';
-    btn.onclick = () => window.mostrarDiagnostico();
-    document.body.appendChild(btn);
-});
-
-
 window.AppState = AppState;
 window.DOM = DOM;
 window.playMusicTrack = playMusicTrack;
@@ -1051,5 +1076,5 @@ window.addToHistory = addToHistory; // expor para outras funções
 window.CacheDB = CacheDB;
 window.clearAppCache = async () => {
     await CacheDB.clear();
-    console.log('[Cache] 🗑️ Cache apagado');
+    console.log('[Cache]  Cache apagado');
 };

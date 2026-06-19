@@ -57,17 +57,61 @@ async function openPlaylistDetail(playlist) {
     const titleEl = document.getElementById('playlistDetailName');
     const countEl = document.getElementById('playlistDetailCount');
     const tracksContainer = document.getElementById('playlistTracksList');
+    const coverEl = document.getElementById('playlistDetailCover');
+
     if (titleEl) titleEl.textContent = playlist.name;
     if (!tracksContainer) return;
     tracksContainer.innerHTML = '';
+
+    // Atualiza cover
+    if (coverEl) {
+        if (playlist.cover) {
+            coverEl.innerHTML = `<img src="${playlist.cover}" style="width:100%;height:100%;object-fit:cover;">`;
+        } else {
+            coverEl.innerHTML = '<span class="material-symbols-rounded">queue_music</span>';
+        }
+    }
 
     if (!playlist.musics) playlist.musics = [];
     const playlistMusics = AppState.musics.filter(m => playlist.musics.includes(m.id));
     if (countEl) countEl.textContent = `${playlistMusics.length} ${playlistMusics.length === 1 ? 'música' : 'músicas'}`;
 
+    // Botão Tocar tudo
+    const playAllBtn = document.getElementById('playlistPlayAllBtn');
+    if (playAllBtn) {
+        const btn = playAllBtn.cloneNode(true);
+        playAllBtn.parentNode.replaceChild(btn, playAllBtn);
+        btn.addEventListener('click', () => {
+            if (playlistMusics.length === 0) return;
+            if (typeof window.setPlayContext === 'function')
+                window.setPlayContext('playlist', playlistMusics, playlist.id);
+            playMusicTrack(playlistMusics[0]);
+        });
+    }
+
+    // Botão Aleatório
+    const shuffleBtn = document.getElementById('playlistShuffleBtn');
+    if (shuffleBtn) {
+        const btn = shuffleBtn.cloneNode(true);
+        shuffleBtn.parentNode.replaceChild(btn, shuffleBtn);
+        btn.addEventListener('click', () => {
+            if (playlistMusics.length === 0) return;
+            AppState.isShuffle = true;
+            if (typeof window.setPlayContext === 'function')
+                window.setPlayContext('playlist', playlistMusics, playlist.id);
+            const rand = playlistMusics[Math.floor(Math.random() * playlistMusics.length)];
+            playMusicTrack(rand);
+        });
+    }
+
     if (playlistMusics.length === 0) {
         tracksContainer.innerHTML = `<div class="empty-state"><span class="material-symbols-rounded">music_note</span><p>Playlist vazia.</p></div>`;
         return;
+    }
+
+    // Define contexto da playlist para fila automática
+    if (typeof window.setPlayContext === 'function') {
+        window.setPlayContext('playlist', playlistMusics, playlist.id);
     }
 
     for (const music of playlistMusics) {
@@ -98,6 +142,11 @@ async function openLikedMusicsDetail() {
     if (likedMusics.length === 0) {
         tracksContainer.innerHTML = `<div class="empty-state"><span class="material-symbols-rounded">favorite</span><p>Nenhum favorito.</p></div>`;
         return;
+    }
+
+    // Define contexto de favoritos para fila automática
+    if (typeof window.setPlayContext === 'function') {
+        window.setPlayContext('favorites', likedMusics, 'favorites');
     }
 
     for (const music of likedMusics) {

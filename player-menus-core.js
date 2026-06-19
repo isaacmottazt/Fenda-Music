@@ -184,45 +184,45 @@ function openContextMenu(music) {
 
     const inPlaylist = AppState.currentPlaylistFilter && AppState.currentPlaylistFilter !== 'favorites';
     const isFav = AppState.favorites && AppState.favorites.has(music.id);
-    const favIcon = isFav ? 'favorite' : 'favorite_border';
-    const favText = isFav ? 'Desfavoritar' : 'Favoritar';
 
-    let menuHTML = '';
-    
-    // Adicionar à playlist (sempre visível)
-    menuHTML += `
-        <button id="menuAddToPlaylist" class="menu-option-btn">
-            <span class="material-symbols-rounded">playlist_add</span> Adicionar à playlist
-        </button>
-    `;
-    
-    // Favoritar/Desfavoritar
-    menuHTML += `
-        <button id="menuFavoriteTrack" class="menu-option-btn">
-            <span class="material-symbols-rounded">${favIcon}</span> ${favText}
-        </button>
-    `;
-    
-    // Baixar música
-    menuHTML += `
-        <button id="menuDownloadTrack" class="menu-option-btn">
-            <span class="material-symbols-rounded">download</span> Baixar música
-        </button>
-    `;
-    
-    // Remover desta playlist (apenas se estiver dentro de uma playlist específica)
-    if (inPlaylist) {
-        menuHTML += `
-            <button id="menuRemoveFromPlaylist" class="menu-option-btn danger">
-                <span class="material-symbols-rounded">remove_circle</span> Remover desta playlist
+    menu.innerHTML = `
+        <div class="ctx-header">
+            <img class="ctx-cover" src="${music.cover || ''}" onerror="this.style.display='none'">
+            <div class="ctx-header-info">
+                <span class="ctx-title">${escapeHtml(music.title)}</span>
+                <span class="ctx-artist">${escapeHtml(music.artist)}</span>
+            </div>
+        </div>
+        <div class="ctx-divider"></div>
+        <div class="ctx-options">
+            <button id="menuAddToQueue" class="ctx-btn">
+                <div class="ctx-icon ctx-icon-purple"><span class="material-symbols-rounded">add_to_queue</span></div>
+                <span>Adicionar à fila</span>
             </button>
-        `;
-    }
+            <button id="menuAddToPlaylist" class="ctx-btn">
+                <div class="ctx-icon ctx-icon-blue"><span class="material-symbols-rounded">playlist_add</span></div>
+                <span>Adicionar à playlist</span>
+            </button>
+            <button id="menuFavoriteTrack" class="ctx-btn">
+                <div class="ctx-icon ctx-icon-pink"><span class="material-symbols-rounded">${isFav ? 'favorite' : 'favorite_border'}</span></div>
+                <span>${isFav ? 'Desfavoritar' : 'Favoritar'}</span>
+            </button>
+            <button id="menuDownloadTrack" class="ctx-btn">
+                <div class="ctx-icon ctx-icon-green"><span class="material-symbols-rounded">download</span></div>
+                <span>Baixar música</span>
+            </button>
+            ${inPlaylist ? `
+            <button id="menuRemoveFromPlaylist" class="ctx-btn ctx-btn-danger">
+                <div class="ctx-icon ctx-icon-red"><span class="material-symbols-rounded">remove_circle</span></div>
+                <span>Remover desta playlist</span>
+            </button>` : ''}
+        </div>
+    `;
 
-    menu.innerHTML = menuHTML;
     menu.classList.add('active');
     backdrop.classList.add('active');
 }
+
 
 function closeContextMenu() {
     const menu = document.getElementById('contextMenuModal');
@@ -262,12 +262,30 @@ function openPlaylistContextMenu(playlist) {
     const backdrop = document.getElementById('contextMenuBackdrop');
     if (menu && backdrop) {
         menu.innerHTML = `
-            <button id="menuRenamePlaylist" class="menu-option-btn">
-                <span class="material-symbols-rounded">edit</span> Renomear playlist
-            </button>
-            <button id="menuDeletePlaylist" class="menu-option-btn danger">
-                <span class="material-symbols-rounded">delete</span> Excluir playlist
-            </button>
+            <div class="ctx-header">
+                <div class="ctx-icon ctx-icon-purple" style="width:48px;height:48px;border-radius:12px;flex-shrink:0;">
+                    <span class="material-symbols-rounded" style="font-size:26px;">queue_music</span>
+                </div>
+                <div class="ctx-header-info">
+                    <span class="ctx-title">${escapeHtml(playlist.name)}</span>
+                    <span class="ctx-artist">${(playlist.musics?.length || 0)} músicas</span>
+                </div>
+            </div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-options">
+                <button id="menuRenamePlaylist" class="ctx-btn">
+                    <div class="ctx-icon ctx-icon-blue">
+                        <span class="material-symbols-rounded">edit</span>
+                    </div>
+                    <span>Renomear playlist</span>
+                </button>
+                <button id="menuDeletePlaylist" class="ctx-btn ctx-btn-danger">
+                    <div class="ctx-icon ctx-icon-red">
+                        <span class="material-symbols-rounded">delete</span>
+                    </div>
+                    <span>Excluir playlist</span>
+                </button>
+            </div>
         `;
         menu.classList.add('active');
         backdrop.classList.add('active');
@@ -338,53 +356,72 @@ function deletePlaylist() {
 }
 
 // Evento global para capturar cliques nos botões do menu
+// Suporta tanto .ctx-btn (novo) quanto .menu-option-btn (compat)
 document.addEventListener('click', (e) => {
-    const button = e.target.closest('.menu-option-btn');
+    const button = e.target.closest('.ctx-btn, .menu-option-btn');
     if (!button) return;
 
     const music = AppState.selectedTrackForMenu;
-    if (!music) return;
-
     const action = button.id;
-    e.stopPropagation(); // Evita fechar o menu antes da ação
+    if (!action) return;
+
+    e.stopPropagation();
 
     switch (action) {
         case 'menuAddToQueue':
-            if (typeof window.addToQueue === 'function') {
-                window.addToQueue(music, false);
-            } else {
-                console.warn('addToQueue não encontrada');
+            if (music) {
+                if (!AppState.queue) AppState.queue = [];
+                AppState.queue.push(music);
+                showToast(`"${music.title}" adicionada à fila`, 'success');
+                if (typeof window.renderQueuePanel === 'function') window.renderQueuePanel();
             }
             closeContextMenu();
             break;
+
         case 'menuAddToPlaylist':
-            if (typeof window.openAddToPlaylistModal === 'function') {
+            if (music && typeof window.openAddToPlaylistModal === 'function') {
                 window.openAddToPlaylistModal(music);
             }
             closeContextMenu();
             break;
-        case 'menuRemoveFromPlaylist':
-            removeTrackFromCurrentPlaylist(music.id);
-            closeContextMenu();
-            break;
-        case 'menuDeleteMusic':
-            if (confirm("Tem certeza que deseja excluir esta música permanentemente?")) {
-                deleteMusicPermanently(music);
-            }
-            closeContextMenu();
-            break;
+
         case 'menuFavoriteTrack':
-            if (typeof window.toggleFavoriteTrack === 'function') {
+            if (music && typeof window.toggleFavoriteTrack === 'function') {
                 window.toggleFavoriteTrack(music.id);
+                showToast(AppState.favorites?.has(music.id) ? 'Removido dos favoritos' : 'Adicionado aos favoritos', 'success');
             }
             closeContextMenu();
             break;
+
         case 'menuDownloadTrack':
-            if (typeof window.cacheAudio === 'function') {
-                window.cacheAudio(music.src, music.id);
+            if (music && typeof window.toggleOfflineMusic === 'function') {
+                window.toggleOfflineMusic(music);
+            } else if (music && typeof window.cacheAudio === 'function') {
+                window.cacheAudio(music);
             }
             closeContextMenu();
             break;
+
+        case 'menuRemoveFromPlaylist':
+            if (music) removeTrackFromCurrentPlaylist(music.id);
+            closeContextMenu();
+            break;
+
+        case 'menuDeleteMusic':
+            if (music && confirm('Excluir esta música permanentemente?')) {
+                if (typeof deleteMusicPermanently === 'function') deleteMusicPermanently(music);
+            }
+            closeContextMenu();
+            break;
+
+        case 'menuRenamePlaylist':
+            triggerRenamePlaylistForm();
+            break;
+
+        case 'menuDeletePlaylist':
+            deletePlaylist();
+            break;
+
         default:
             break;
     }
@@ -397,6 +434,86 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// ========== PAINEL DE FILA ==========
+function openQueuePanel() {
+    const panel = document.getElementById('queuePanel');
+    if (!panel) return;
+    renderQueuePanel();
+    panel.classList.add('active');
+}
+
+function closeQueuePanel() {
+    const panel = document.getElementById('queuePanel');
+    if (panel) panel.classList.remove('active');
+}
+
+function renderQueuePanel() {
+    const list = document.getElementById('queuePanelList');
+    if (!list) return;
+
+    const manualQueue = AppState.queue || [];
+    const autoQueue = AppState.autoQueue || [];
+    const hasAnything = manualQueue.length > 0 || autoQueue.length > 0;
+
+    if (!hasAnything) {
+        list.innerHTML = `
+            <div class="queue-empty-state">
+                <span class="material-symbols-rounded">queue_music</span>
+                <p>Fila vazia</p>
+                <span>Toque em uma música para começar</span>
+            </div>`;
+        return;
+    }
+
+    list.innerHTML = '';
+
+    function makeItem(music, idx, isManual) {
+        const item = document.createElement('div');
+        item.className = 'queue-panel-item';
+        item.innerHTML = `
+            <img src="${music.cover || 'https://via.placeholder.com/48'}" class="queue-panel-cover">
+            <div class="queue-panel-info">
+                <p class="queue-panel-title">${escapeHtml(music.title)}</p>
+                <p class="queue-panel-artist">${escapeHtml(music.artist)}</p>
+            </div>
+            ${isManual ? `<button class="queue-panel-remove"><span class="material-symbols-rounded">close</span></button>` : ''}
+        `;
+        if (isManual) {
+            item.querySelector('.queue-panel-remove').addEventListener('click', (e) => {
+                e.stopPropagation();
+                AppState.queue.splice(idx, 1);
+                renderQueuePanel();
+            });
+        }
+        item.addEventListener('click', (e) => {
+            if (e.target.closest('.queue-panel-remove')) return;
+            if (isManual) AppState.queue = AppState.queue.slice(idx);
+            else AppState.autoQueue = AppState.autoQueue.slice(idx);
+            playMusicTrack(music);
+            closeQueuePanel();
+        });
+        return item;
+    }
+
+    // Seção fila manual
+    if (manualQueue.length > 0) {
+        const label = document.createElement('p');
+        label.className = 'queue-section-label';
+        label.textContent = 'Na fila';
+        list.appendChild(label);
+        manualQueue.forEach((music, idx) => list.appendChild(makeItem(music, idx, true)));
+    }
+
+    // Seção fila automática
+    if (autoQueue.length > 0) {
+        const label = document.createElement('p');
+        label.className = 'queue-section-label';
+        label.textContent = AppState.isShuffle ? 'Próximas (aleatório)' : 'Próximas';
+        list.appendChild(label);
+        autoQueue.slice(0, 20).forEach((music, idx) => list.appendChild(makeItem(music, idx, false)));
+    }
+}
+
 // Exposição global
 window.initMenusAndSearch = initMenusAndSearch;
 window.openContextMenu = openContextMenu;
@@ -405,3 +522,6 @@ window.closeContextMenu = closeContextMenu;
 window.addTrackToPlaylist = addTrackToPlaylist;
 window.removeTrackFromCurrentPlaylist = removeTrackFromCurrentPlaylist;
 window.triggerRenamePlaylistForm = triggerRenamePlaylistForm;
+window.openQueuePanel = openQueuePanel;
+window.closeQueuePanel = closeQueuePanel;
+window.renderQueuePanel = renderQueuePanel;
